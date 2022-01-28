@@ -11,6 +11,7 @@ node_modules
 !.gitignore
 !.ncurc.js
 !.npmignore
+!.npmrc
 !.README
 !.travis.yml
 /package-lock.json
