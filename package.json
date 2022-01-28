@@ -67,11 +67,15 @@
     "url": "https://github.com/siliconbear/lightship-koa"
   },
   "scripts": {
-    "build": "rm -fr ./dist && tsc",
+    "prebuild": "rm -rf ./dist",
+    "build": "tsc",
     "generate-readme": "gitdown ./.README/README.md --output-file ./README.md",
     "lint": "eslint ./src ./test",
     "test": "NODE_ENV=test ava --verbose --serial",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "version": "npm run build",
+    "postversion": "git push && git push --tags",
+    "postpublish": "rm -rf dist"
   },
   "version": "1.0.2"
 }
