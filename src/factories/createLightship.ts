@@ -1,3 +1,5 @@
+// eslint-disable-next-line node/no-deprecated-api
+import domain from 'domain';
 import {
   EventEmitter,
 } from 'events';
@@ -5,13 +7,21 @@ import type {
   AddressInfo,
 } from 'net';
 import {
+  captureException,
+  getCurrentHub,
   Handlers as SentryHandlers,
+  withScope,
 } from '@sentry/node';
 import delay from 'delay';
-import express from 'express';
 import {
   createHttpTerminator,
 } from 'http-terminator';
+import type {
+  Context,
+  Next,
+} from 'koa';
+import Koa from 'koa';
+import Router from 'koa-router';
 import {
   serializeError,
 } from 'serialize-error';
@@ -41,7 +51,7 @@ const log = Logger.child({
 
 const {
   LIGHTSHIP_PORT,
-// eslint-disable-next-line node/no-process-env
+  // eslint-disable-next-line node/no-process-env
 } = process.env;
 
 const defaultConfiguration: Configuration = {
@@ -105,7 +115,7 @@ export default (userConfiguration?: ConfigurationInput): Lightship => {
     return serverIsReady;
   };
 
-  const app = express();
+  const app = new Koa();
 
   const modeIsLocal = configuration.detectKubernetes === true && isKubernetes() === false;
 
@@ -118,46 +128,81 @@ export default (userConfiguration?: ConfigurationInput): Lightship => {
     server,
   });
 
-  app.use(SentryHandlers.requestHandler());
+  app.use((context, next) => {
+    return new Promise<void>((resolve, _) => {
+      const local = domain.create();
+      local.add(app);
+      local.on('error', (error: { message: string, status: number, }) => {
+        context.status = error.status || 500;
+        context.body = error.message;
+        context.app.emit('error', error, context);
+      });
+      void local.run(async () => {
+        getCurrentHub().configureScope((scope) => {
+          return scope.addEventProcessor((event) => {
+            return SentryHandlers.parseRequest(event, context.request, {
+              user: false,
+            });
+          });
+        });
+        // eslint-disable-next-line node/callback-return
+        await next();
+        resolve();
+      });
+    });
+  });
 
-  app.get('/health', (incomingMessage, serverResponse) => {
+  const router = new Router();
+  router.get('/health', (context: Context, next: Next) => {
     if (serverIsShuttingDown) {
-      serverResponse
-        .status(500)
-        .send(SERVER_IS_SHUTTING_DOWN);
+      context.status = 500;
+      context.body = SERVER_IS_SHUTTING_DOWN;
     } else if (serverIsReady) {
-      serverResponse
-        .send(SERVER_IS_READY);
+      context.status = 200;
+      context.body = SERVER_IS_READY;
     } else {
-      serverResponse
-        .status(500)
-        .send(SERVER_IS_NOT_READY);
+      context.status = 500;
+      context.body = SERVER_IS_NOT_READY;
     }
+
+    return next();
   });
 
-  app.get('/live', (incomingMessage, serverResponse) => {
+  router.get('/live', (context: Context, next: Next) => {
     if (serverIsShuttingDown) {
-      serverResponse
-        .status(500)
-        .send(SERVER_IS_SHUTTING_DOWN);
+      context.status = 500;
+      context.body = SERVER_IS_SHUTTING_DOWN;
     } else {
-      serverResponse
-        .send(SERVER_IS_NOT_SHUTTING_DOWN);
+      context.status = 200;
+      context.body = SERVER_IS_NOT_SHUTTING_DOWN;
     }
+
+    return next();
   });
 
-  app.get('/ready', (incomingMessage, serverResponse) => {
+  router.get('/ready', (context: Context, next: Next) => {
     if (isServerReady()) {
-      serverResponse
-        .send(SERVER_IS_READY);
+      context.status = 200;
+      context.body = SERVER_IS_READY;
     } else {
-      serverResponse
-        .status(500)
-        .send(SERVER_IS_NOT_READY);
+      context.status = 500;
+      context.body = SERVER_IS_NOT_READY;
     }
+
+    return next();
   });
 
-  app.use(SentryHandlers.errorHandler());
+  // Routes
+  app.use(router.routes()).use(router.allowedMethods());
+
+  app.on('error', (error, context) => {
+    withScope((scope) => {
+      scope.addEventProcessor((event) => {
+        return SentryHandlers.parseRequest(event, context.request);
+      });
+      captureException(error);
+    });
+  });
 
   const signalNotReady = () => {
     if (serverIsReady === false) {
@@ -227,9 +272,12 @@ export default (userConfiguration?: ConfigurationInput): Lightship => {
           log.debug('checking if there are live beacons');
 
           if (beacons.length > 0) {
-            log.info({
-              beacons,
-            } as {}, 'program termination is on hold because there are live beacons');
+            log.info(
+              {
+                beacons,
+              } as {},
+              'program termination is on hold because there are live beacons',
+            );
           } else {
             log.info('there are no live beacons; proceeding to terminate the Node.js process');
 
@@ -267,9 +315,12 @@ export default (userConfiguration?: ConfigurationInput): Lightship => {
       try {
         await shutdownHandler();
       } catch (error) {
-        log.error({
-          error: serializeError(error),
-        }, 'shutdown handler produced an error');
+        log.error(
+          {
+            error: serializeError(error),
+          },
+          'shutdown handler produced an error',
+        );
       }
     }
 
@@ -285,9 +336,7 @@ export default (userConfiguration?: ConfigurationInput): Lightship => {
       log.warn('process did not exit on its own; investigate what is keeping the event loop active');
 
       configuration.terminate();
-    }, 1_000)
-
-      .unref();
+    }, 1_000).unref();
   };
 
   if (modeIsLocal) {
@@ -295,9 +344,12 @@ export default (userConfiguration?: ConfigurationInput): Lightship => {
   } else {
     for (const signal of configuration.signals) {
       process.on(signal, () => {
-        log.debug({
-          signal,
-        }, 'received a shutdown signal');
+        log.debug(
+          {
+            signal,
+          },
+          'received a shutdown signal',
+        );
 
         void shutdown(false);
       });
@@ -313,9 +365,12 @@ export default (userConfiguration?: ConfigurationInput): Lightship => {
 
     return {
       die: async () => {
-        log.trace({
-          beacon,
-        } as {}, 'beacon has been killed');
+        log.trace(
+          {
+            beacon,
+          } as {},
+          'beacon has been killed',
+        );
 
         beacons.splice(beacons.indexOf(beacon), 1);
 
