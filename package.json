@@ -67,6 +67,7 @@
     "url": "https://github.com/siliconbear/lightship-koa"
   },
   "scripts": {
+    "preinstall": "rm -rf node_modules && rm -f ./yarn.lock",
     "prebuild": "rm -rf ./dist",
     "build": "tsc",
     "generate-readme": "gitdown ./.README/README.md --output-file ./README.md",
