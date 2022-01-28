@@ -64,7 +64,7 @@
   "name": "@siliconbear/lightship-koa",
   "repository": {
     "type": "git",
-    "url": "https://github.com/SiliconBear/lightship"
+    "url": "https://github.com/siliconbear/lightship-koa"
   },
   "scripts": {
     "build": "rm -fr ./dist && tsc",
