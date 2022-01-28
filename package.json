@@ -1,8 +1,8 @@
 {
   "author": {
-    "email": "gajus@gajus.com",
-    "name": "Gajus Kuizinas",
-    "url": "http://gajus.com"
+    "email": "toni@siliconbear.com",
+    "name": "Akinjiola Toni",
+    "url": "https://siliconbear.com"
   },
   "ava": {
     "extensions": [
@@ -61,7 +61,7 @@
   "license": "BSD-3-Clause",
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
-  "name": "lightship-koa",
+  "name": "@siliconbear/lightship-koa",
   "repository": {
     "type": "git",
     "url": "https://github.com/SiliconBear/lightship"
