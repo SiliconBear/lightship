@@ -22,14 +22,15 @@
     "domain": "0.0.1",
     "http-terminator": "^3.0.4",
     "koa": "^2.13.4",
+    "koa-logger": "^3.2.1",
     "koa-router": "^10.1.1",
-    "roarr": "^7.8.0",
     "serialize-error": "^8.1.0"
   },
   "devDependencies": {
     "@istanbuljs/nyc-config-typescript": "^1.0.2",
     "@types/http-terminator": "^2.0.2",
     "@types/koa": "^2.13.4",
+    "@types/koa-logger": "^3.1.2",
     "@types/koa-router": "^7.4.4",
     "@types/node": "^16.9.2",
     "@types/roarr": "^2.14.3",

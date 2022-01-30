@@ -21,11 +21,11 @@ import type {
   Next,
 } from 'koa';
 import Koa from 'koa';
+import Logger from 'koa-logger';
 import Router from 'koa-router';
 import {
   serializeError,
 } from 'serialize-error';
-import Logger from '../Logger';
 import {
   SERVER_IS_NOT_READY,
   SERVER_IS_NOT_SHUTTING_DOWN,
@@ -44,10 +44,6 @@ import type {
 import {
   isKubernetes,
 } from '../utilities';
-
-const log = Logger.child({
-  namespace: 'factories/createLightship',
-});
 
 const {
   LIGHTSHIP_PORT,
@@ -75,7 +71,7 @@ type Beacon = {
   context: BeaconContext,
 };
 
-export default (userConfiguration?: ConfigurationInput): Lightship => {
+export const createLightship = (userConfiguration?: ConfigurationInput): Lightship => {
   let blockingTasks: BlockingTask[] = [];
 
   let resolveFirstReady: () => void;
@@ -84,7 +80,7 @@ export default (userConfiguration?: ConfigurationInput): Lightship => {
   });
 
   void deferredFirstReady.then(() => {
-    log.info('service became available for the first time');
+    console.log('service became available for the first time');
   });
 
   const eventEmitter = new EventEmitter();
@@ -107,7 +103,7 @@ export default (userConfiguration?: ConfigurationInput): Lightship => {
 
   const isServerReady = () => {
     if (blockingTasks.length > 0) {
-      log.debug('service is not ready because there are blocking tasks');
+      console.debug('service is not ready because there are blocking tasks');
 
       return false;
     }
@@ -115,18 +111,48 @@ export default (userConfiguration?: ConfigurationInput): Lightship => {
     return serverIsReady;
   };
 
-  const app = new Koa();
-
   const modeIsLocal = configuration.detectKubernetes === true && isKubernetes() === false;
 
-  const server = app.listen(modeIsLocal ? undefined : configuration.port, () => {
-    const address = server.address() as AddressInfo;
-    log.info('Lightship HTTP service is running on port %s', address.port);
+  const app = new Koa();
+  app.use(Logger());
+  const router = new Router();
+  router.get('/health', (context: Context, next: Next) => {
+    if (serverIsShuttingDown) {
+      context.status = 500;
+      context.body = SERVER_IS_SHUTTING_DOWN;
+    } else if (serverIsReady) {
+      context.status = 200;
+      context.body = SERVER_IS_READY;
+    } else {
+      context.status = 500;
+      context.body = SERVER_IS_NOT_READY;
+    }
+
+    return next();
+  }).get('/live', (context: Context, next: Next) => {
+    if (serverIsShuttingDown) {
+      context.status = 500;
+      context.body = SERVER_IS_SHUTTING_DOWN;
+    } else {
+      context.status = 200;
+      context.body = SERVER_IS_NOT_SHUTTING_DOWN;
+    }
+
+    return next();
+  }).get('/ready', (context: Context, next: Next) => {
+    if (isServerReady()) {
+      context.status = 200;
+      context.body = SERVER_IS_READY;
+    } else {
+      context.status = 500;
+      context.body = SERVER_IS_NOT_READY;
+    }
+
+    return next();
   });
 
-  const httpTerminator = createHttpTerminator({
-    server,
-  });
+  // Routes
+  app.use(router.routes()).use(router.allowedMethods());
 
   app.use((context, next) => {
     return new Promise<void>((resolve, _) => {
@@ -152,48 +178,11 @@ export default (userConfiguration?: ConfigurationInput): Lightship => {
     });
   });
 
-  const router = new Router();
-  router.get('/health', (context: Context, next: Next) => {
-    if (serverIsShuttingDown) {
-      context.status = 500;
-      context.body = SERVER_IS_SHUTTING_DOWN;
-    } else if (serverIsReady) {
-      context.status = 200;
-      context.body = SERVER_IS_READY;
-    } else {
-      context.status = 500;
-      context.body = SERVER_IS_NOT_READY;
-    }
-
-    return next();
+  const PORT = (modeIsLocal ? undefined : configuration.port);
+  const server = app.listen(PORT, () => {
+    const address = server.address() as AddressInfo;
+    console.log(`⚡️[server]: Lightship HTTP service is running on port at http://localhost:${address.port} or https://localhost:${address.port}`);
   });
-
-  router.get('/live', (context: Context, next: Next) => {
-    if (serverIsShuttingDown) {
-      context.status = 500;
-      context.body = SERVER_IS_SHUTTING_DOWN;
-    } else {
-      context.status = 200;
-      context.body = SERVER_IS_NOT_SHUTTING_DOWN;
-    }
-
-    return next();
-  });
-
-  router.get('/ready', (context: Context, next: Next) => {
-    if (isServerReady()) {
-      context.status = 200;
-      context.body = SERVER_IS_READY;
-    } else {
-      context.status = 500;
-      context.body = SERVER_IS_NOT_READY;
-    }
-
-    return next();
-  });
-
-  // Routes
-  app.use(router.routes()).use(router.allowedMethods());
 
   app.on('error', (error, context) => {
     withScope((scope) => {
@@ -204,27 +193,31 @@ export default (userConfiguration?: ConfigurationInput): Lightship => {
     });
   });
 
+  const httpTerminator = createHttpTerminator({
+    server,
+  });
+
   const signalNotReady = () => {
     if (serverIsReady === false) {
-      log.warn('server is already in a SERVER_IS_NOT_READY state');
+      console.warn('server is already in a SERVER_IS_NOT_READY state');
     }
 
-    log.info('signaling that the server is not ready to accept connections');
+    console.info('signaling that the server is not ready to accept connections');
 
     serverIsReady = false;
   };
 
   const signalReady = () => {
     if (serverIsShuttingDown) {
-      log.warn('server is already shutting down');
+      console.warn('server is already shutting down');
 
       return;
     }
 
-    log.info('signaling that the server is ready');
+    console.info('signaling that the server is ready');
 
     if (blockingTasks.length > 0) {
-      log.debug('service will not become immediately ready because there are blocking tasks');
+      console.debug('service will not become immediately ready because there are blocking tasks');
     }
 
     serverIsReady = true;
@@ -236,7 +229,7 @@ export default (userConfiguration?: ConfigurationInput): Lightship => {
 
   const shutdown = async (nextReady: boolean) => {
     if (serverIsShuttingDown) {
-      log.warn('server is already shutting down');
+      console.warn('server is already shutting down');
 
       return;
     }
@@ -246,10 +239,10 @@ export default (userConfiguration?: ConfigurationInput): Lightship => {
     serverIsReady = nextReady;
     serverIsShuttingDown = true;
 
-    log.info('received request to shutdown the service');
+    console.info('received request to shutdown the service');
 
     if (configuration.shutdownDelay) {
-      log.debug('delaying shutdown handler by %d seconds', configuration.shutdownDelay / 1_000);
+      console.debug('delaying shutdown handler by %d seconds', configuration.shutdownDelay / 1_000);
 
       await delay(configuration.shutdownDelay);
     }
@@ -258,7 +251,7 @@ export default (userConfiguration?: ConfigurationInput): Lightship => {
 
     if (configuration.gracefulShutdownTimeout !== Number.POSITIVE_INFINITY) {
       gracefulShutdownTimeoutId = setTimeout(() => {
-        log.warn('graceful shutdown timeout; forcing termination');
+        console.warn('graceful shutdown timeout; forcing termination');
 
         configuration.terminate();
       }, configuration.gracefulShutdownTimeout);
@@ -269,17 +262,17 @@ export default (userConfiguration?: ConfigurationInput): Lightship => {
     if (beacons.length) {
       await new Promise<void>((resolve) => {
         const check = () => {
-          log.debug('checking if there are live beacons');
+          console.debug('checking if there are live beacons');
 
           if (beacons.length > 0) {
-            log.info(
+            console.info(
               {
                 beacons,
               } as {},
               'program termination is on hold because there are live beacons',
             );
           } else {
-            log.info('there are no live beacons; proceeding to terminate the Node.js process');
+            console.info('there are no live beacons; proceeding to terminate the Node.js process');
 
             eventEmitter.off('beaconStateChange', check);
 
@@ -301,7 +294,7 @@ export default (userConfiguration?: ConfigurationInput): Lightship => {
 
     if (configuration.shutdownHandlerTimeout !== Number.POSITIVE_INFINITY) {
       shutdownHandlerTimeoutId = setTimeout(() => {
-        log.warn('shutdown handler timeout; forcing termination');
+        console.warn('shutdown handler timeout; forcing termination');
 
         configuration.terminate();
       }, configuration.shutdownHandlerTimeout);
@@ -309,13 +302,13 @@ export default (userConfiguration?: ConfigurationInput): Lightship => {
       shutdownHandlerTimeoutId.unref();
     }
 
-    log.debug('running %d shutdown handler(s)', shutdownHandlers.length);
+    console.debug('running %d shutdown handler(s)', shutdownHandlers.length);
 
     for (const shutdownHandler of shutdownHandlers) {
       try {
         await shutdownHandler();
       } catch (error) {
-        log.error(
+        console.error(
           {
             error: serializeError(error),
           },
@@ -328,23 +321,23 @@ export default (userConfiguration?: ConfigurationInput): Lightship => {
       clearTimeout(shutdownHandlerTimeoutId);
     }
 
-    log.debug('all shutdown handlers have run to completion; proceeding to terminate the Node.js process');
+    console.debug('all shutdown handlers have run to completion; proceeding to terminate the Node.js process');
 
     await httpTerminator.terminate();
 
     setTimeout(() => {
-      log.warn('process did not exit on its own; investigate what is keeping the event loop active');
+      console.warn('process did not exit on its own; investigate what is keeping the event loop active');
 
       configuration.terminate();
     }, 1_000).unref();
   };
 
   if (modeIsLocal) {
-    log.warn('shutdown handlers are not used in the local mode');
+    console.warn('shutdown handlers are not used in the local mode');
   } else {
     for (const signal of configuration.signals) {
       process.on(signal, () => {
-        log.debug(
+        console.debug(
           {
             signal,
           },
@@ -365,7 +358,7 @@ export default (userConfiguration?: ConfigurationInput): Lightship => {
 
     return {
       die: async () => {
-        log.trace(
+        console.log(
           {
             beacon,
           } as {},

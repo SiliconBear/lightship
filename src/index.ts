@@ -1,5 +1,5 @@
 export {
-  default as createLightship,
+  createLightship,
 } from './factories/createLightship';
 export type {
   Lightship,

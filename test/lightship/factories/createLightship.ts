@@ -7,7 +7,7 @@ import delay from 'delay';
 import {
   stub, spy,
 } from 'sinon';
-import createLightship from '../../../src/factories/createLightship';
+import { createLightship } from '../../../src/factories/createLightship';
 import {
   SERVER_IS_NOT_READY, SERVER_IS_NOT_SHUTTING_DOWN, SERVER_IS_READY, SERVER_IS_SHUTTING_DOWN,
 } from '../../../src/states';
